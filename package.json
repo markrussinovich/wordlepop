@@ -64,7 +64,7 @@
     "ts-jest": "^29.4.15",
     "tsx": "^4.22.4",
     "typescript": "^5.2.2",
-    "vite": "^8.0.16"
+    "vite": "^8.3.8"
   },
   "browserslist": {
     "production": [
