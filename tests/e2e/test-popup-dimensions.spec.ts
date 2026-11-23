@@ -1,9 +1,9 @@
-import { test, expect } from '@playwright/test';
+import { test } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 
 test.describe('Popup Dimensions Measurement', () => {
-  test('measure popup states and calculate required padding', async ({ page, context }) => {
+  test('measure popup states and calculate required padding', async ({ page }) => {
     // Build extension first to ensure latest changes
     const distPath = path.resolve(__dirname, '../../dist');
     console.log('Using extension from:', distPath);
@@ -13,7 +13,6 @@ test.describe('Popup Dimensions Measurement', () => {
 
     // Load popup HTML directly to measure
     const popupHtmlPath = path.resolve(__dirname, '../../dist/popup.html');
-    const popupJsPath = path.resolve(__dirname, '../../dist/popup.js');
     
     if (!fs.existsSync(popupHtmlPath)) {
       console.error('Popup not built. Run npm run build:quick first.');
@@ -73,7 +72,7 @@ test.describe('Popup Dimensions Measurement', () => {
           <div class="popup-container">
             <header class="popup-header">
               <div class="popup-header-top">
-                <h1>Wordle Stats</h1>
+                <h1>WordlePop</h1>
                 <button class="refresh-btn" disabled>↻ Refresh</button>
               </div>
               <div class="time-frame-picker">

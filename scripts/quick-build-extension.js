@@ -2,7 +2,7 @@
 import esbuild from 'esbuild';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { copyFileSync, existsSync, mkdirSync, cpSync, createWriteStream, readFileSync, unlinkSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, cpSync, createWriteStream, readFileSync, readdirSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
 import archiver from 'archiver';
 import convertIcons from './convert-icons.js';
@@ -65,20 +65,30 @@ async function buildExtension() {
       mkdirSync(distDir, { recursive: true });
     }
     
-    // Copy popup files (vanilla JS - no build needed)
-    console.log('Copying popup files...');
+    console.log('Building popup...');
     copyFile(
       resolve(rootDir, 'src/extension/popup/popup.html'),
       resolve(rootDir, 'dist/popup.html')
     );
-    copyFile(
-      resolve(rootDir, 'src/extension/popup/popup.js'),
-      resolve(rootDir, 'dist/popup.js')
-    );
-    console.log('✓ popup files copied\n');
+    await esbuild.build({
+      ...sharedConfig,
+      entryPoints: [resolve(rootDir, 'src/extension/popup/popup.js')],
+      outfile: resolve(rootDir, 'dist/popup.js'),
+      format: 'iife',
+    });
+    console.log('✓ popup built\n');
     
     // Build dashboard using Vite
     console.log('Building dashboard with Vite...');
+    // Hashed vendor chunks from older dependencies must not enter the new package.
+    const chunksDir = resolve(distDir, 'chunks');
+    if (existsSync(chunksDir)) {
+      for (const entry of readdirSync(chunksDir, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.endsWith('.js')) {
+          unlinkSync(resolve(chunksDir, entry.name));
+        }
+      }
+    }
     execSync('npm run build:dashboard', { stdio: 'inherit', cwd: rootDir });
     console.log('✓ dashboard built\n');
     
@@ -152,6 +162,11 @@ async function buildExtension() {
 async function packageForStore(distDir) {
   console.log('\nPackaging extension for Chrome Web Store...');
 
+  const legacyPopup = resolve(distDir, 'src', 'extension', 'popup', 'index.html');
+  if (existsSync(legacyPopup)) {
+    unlinkSync(legacyPopup);
+  }
+
   const listingDir = resolve(rootDir, 'listing');
   const latestBuildDir = resolve(listingDir, 'latest-build');
 
@@ -173,7 +188,7 @@ async function packageForStore(distDir) {
     console.warn('⚠ Unable to read manifest version, defaulting to "unversioned".', error.message);
   }
 
-  const zipName = `wordle-stat-explorer-${version}.zip`;
+  const zipName = `wordlepop-${version}.zip`;
   const zipPath = resolve(latestBuildDir, zipName);
 
   if (existsSync(zipPath)) {

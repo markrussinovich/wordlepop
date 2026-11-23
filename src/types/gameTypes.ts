@@ -1,4 +1,4 @@
-// Core game and statistics types for Wordle Stat Explorer
+// Core game and statistics types for WordlePop
 
 // Time frame options for statistics requests
 export type TimeFrame = '7d' | '30d' | '90d' | 'ytd' | 'all' | 'custom';
@@ -48,6 +48,9 @@ export interface GameResult {
   // WordleBot-specific fields
   skillScore?: number; // 0-100 rating from WordleBot
   luckScore?: number; // 0-100 rating from WordleBot
+  nytReaderAverage?: number; // Per-puzzle NYT readers' mean solve turns, when available
+  nytReaderSource?: 'wordlebot' | 'manual';
+  nytReaderMode?: 'normal' | 'hard';
   analysisUrl?: string; // Link to detailed WordleBot analysis
   boardImageUrl?: string; // Data URL or URL of the game board image
   scrapedFrom?: 'wordle-bot' | 'manual' | 'live-capture'; // Source of the data

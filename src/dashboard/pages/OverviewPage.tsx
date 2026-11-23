@@ -1,21 +1,29 @@
 // Dashboard overview page with comprehensive statistics display
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import TimelineChart from '@/components/charts/TimelineChart';
 import TurnDistributionBar from '@/components/charts/TurnDistributionBar';
-import { useGameDataStore } from '@/stores/gameData';
+import { calculateStatisticsFromGames, useGameDataStore } from '@/stores/gameData';
 import { calculateStreakStats } from '@/utils/streakCalculation';
+import SolveAnalytics from '../components/SolveAnalytics';
+import { GameResult } from '@/types/gameTypes';
+import { useSolver } from '../hooks/useSolver';
+import { Link } from 'react-router-dom';
+import { localPuzzleDate } from '@/types/playTypes';
+import { usePlayHistory } from '@/play/usePlayHistory';
 
 const OverviewPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [rangeStreaks, setRangeStreaks] = useState<{ current: number; max: number } | null>(null);
-  const [filteredGames, setFilteredGames] = useState<any[]>([]);
+  const [filteredGames, setFilteredGames] = useState<GameResult[]>([]);
+  const [selectedDates, setSelectedDates] = useState<{ start: Date; end: Date } | null>(null);
 
   // Store hooks
   const { 
     games, 
-    getStatisticsForTimeFrame, 
     isLoading: gamesLoading 
   } = useGameDataStore();
+  const { displayGames } = usePlayHistory(games);
+  const solver = useSolver(displayGames);
 
   // Load data on component mount
   useEffect(() => {
@@ -34,59 +42,31 @@ const OverviewPage: React.FC = () => {
     loadData();
   }, []);
 
-  const statistics = getStatisticsForTimeFrame('all');
+  const statistics = useMemo(() => displayGames.length
+    ? calculateStatisticsFromGames(displayGames, 'all', new Date(0), new Date())
+    : null, [displayGames]);
 
   // Handle timeline range selection
   const handleRangeChange = (startDate: Date, endDate: Date) => {
-    // Recalculate streaks for the selected range
-    // This uses all games but with the endDate as the right edge of the range
-    const streaks = calculateStreakStats(games, startDate, endDate);
-    setRangeStreaks({ current: streaks.currentStreak, max: streaks.maxStreak });
-    
-    // Filter games by selected date range
-    const filtered = games.filter(game => {
-      const gameDate = new Date(game.date);
-      return gameDate >= startDate && gameDate <= endDate;
-    });
-    setFilteredGames(filtered);
-    
-    console.log('[OverviewPage] Range selected:', {
-      start: startDate.toISOString(),
-      end: endDate.toISOString(),
-      currentStreak: streaks.currentStreak,
-      maxStreak: streaks.maxStreak,
-      filteredGames: filtered.length
-    });
+    setSelectedDates({ start: startDate, end: endDate });
   };
 
   // Initialize streak data for all games on mount
   useEffect(() => {
-    if (games.length > 0) {
+    if (displayGames.length > 0) {
       // Calculate initial streaks for all games - need to provide date range
-      const sortedGames = [...games].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-      const startDate = new Date(sortedGames[0].date);
-      const endDate = new Date(sortedGames[sortedGames.length - 1].date);
-      const allStreaks = calculateStreakStats(games, startDate, endDate);
+      const sortedGames = [...displayGames].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      const startDate = selectedDates?.start ?? new Date(`${sortedGames[0].date}T00:00:00`);
+      const endDate = selectedDates?.end ?? new Date(`${sortedGames[sortedGames.length - 1].date}T00:00:00`);
+      const allStreaks = calculateStreakStats(displayGames, startDate, endDate);
       setRangeStreaks({ current: allStreaks.currentStreak, max: allStreaks.maxStreak });
       
-      // Initialize filtered games with all games
-      setFilteredGames(games);
-      
-      console.log('[OverviewPage] Sample games:', games.slice(0, 5));
-      console.log('[OverviewPage] Statistics:', statistics);
-      
-      // Correct categorization: 0=unplayed, 1-6=win, 7+=loss
-      const unplayed = games.filter(g => !g.attempts || g.attempts === 0).length;
-      const wins = games.filter(g => g.attempts && g.attempts >= 1 && g.attempts <= 6).length;
-      const losses = games.filter(g => g.attempts && g.attempts >= 7).length;
-      
-      console.log('[OverviewPage] Total games:', games.length);
-      console.log('[OverviewPage] Unplayed (0 attempts):', unplayed);
-      console.log('[OverviewPage] Wins (1-6 attempts):', wins);
-      console.log('[OverviewPage] Losses (7+ attempts):', losses);
-      console.log('[OverviewPage] Played games:', wins + losses);
+      const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const start = dateKey(startDate);
+      const end = dateKey(endDate);
+      setFilteredGames(displayGames.filter(game => game.date >= start && game.date <= end));
     }
-  }, [games, statistics]);
+  }, [displayGames, selectedDates]);
 
   if (isLoading || gamesLoading) {
     return (
@@ -97,11 +77,13 @@ const OverviewPage: React.FC = () => {
     );
   }
 
-  if (games.length === 0) {
+  if (displayGames.length === 0) {
     return (
       <div className="dashboard-empty">
         <h2>No Games Found</h2>
         <p>Visit the WordleBot page to import your game history.</p>
+        <Link to="/play">Play Wordle</Link>
+        <SolveAnalytics games={games} solver={solver} />
       </div>
     );
   }
@@ -110,8 +92,8 @@ const OverviewPage: React.FC = () => {
     <div className="dashboard-container">
       {/* Header */}
       <div className="dashboard-header">
-        <h1>Wordle Stat Explorer</h1>
-        <p className="subtitle">Your complete Wordle performance history</p>
+        <h1>WordlePop</h1>
+        <p className="subtitle">Play, compare, and track your Wordle progress{' | '}<Link to="/play">Play Wordle</Link></p>
       </div>
 
       {/* Stats Panel */}
@@ -140,20 +122,16 @@ const OverviewPage: React.FC = () => {
           </div>
         </div>
         
-        <div className="stat-item stat-item-streaks">
-          <div className="streak-group">
-            <div className="streak-stat">
-              <div className="stat-label">Current Streak</div>
-              <div className="stat-value stat-streak">
-                {rangeStreaks ? rangeStreaks.current : (statistics?.currentStreak || 0)}
-              </div>
-            </div>
-            <div className="streak-stat">
-              <div className="stat-label">Longest Streak</div>
-              <div className="stat-value stat-streak">
-                {rangeStreaks ? rangeStreaks.max : (statistics?.maxStreak || 0)}
-              </div>
-            </div>
+        <div className="stat-item">
+          <div className="stat-label">Current Streak</div>
+          <div className="stat-value stat-streak">
+            {rangeStreaks ? rangeStreaks.current : (statistics?.currentStreak || 0)}
+          </div>
+        </div>
+        <div className="stat-item">
+          <div className="stat-label">Longest Streak</div>
+          <div className="stat-value stat-streak">
+            {rangeStreaks ? rangeStreaks.max : (statistics?.maxStreak || 0)}
           </div>
         </div>
       </div>
@@ -162,16 +140,22 @@ const OverviewPage: React.FC = () => {
       <div className="chart-section">
         <h2 className="section-title">Performance Timeline</h2>
         <p className="section-subtitle">
-          Click and drag to select a date range and zoom in. Streaks and turn distribution update based on selected range.
+          Compare turns, solver results, NYT readers, skill, and luck. Drag the range handles to update all comparisons and game tiles.
         </p>
         
         <TimelineChart 
-          games={games} 
+          games={displayGames}
+          solverResults={solver.results}
           onRangeChange={handleRangeChange}
-          turnDistribution={<TurnDistributionBar games={filteredGames.length > 0 ? filteredGames : games} />}
+          turnDistribution={<TurnDistributionBar games={filteredGames} />}
           streakData={rangeStreaks}
         />
       </div>
+      <SolveAnalytics games={filteredGames} allGames={displayGames} solver={solver}
+        dateRange={selectedDates ? {
+          start: localPuzzleDate(selectedDates.start),
+          end: localPuzzleDate(selectedDates.end),
+        } : undefined} />
     </div>
   );
 };

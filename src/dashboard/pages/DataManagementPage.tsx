@@ -44,6 +44,7 @@ const DataManagementPage: React.FC = () => {
             puzzle: parseInt(gameData.puzzle) || 0,
             date: gameData.date || new Date().toISOString().split('T')[0],
             won: gameData.won === 'true' || gameData.won === '1',
+            attempts: parseInt(gameData.guesses) || null,
             guesses: parseInt(gameData.guesses) || null,
             time: parseInt(gameData.time) || null,
             hardMode: gameData.hardMode === 'true' || gameData.hardMode === '1',
@@ -90,6 +91,7 @@ const DataManagementPage: React.FC = () => {
         puzzle,
         date: new Date().toISOString().split('T')[0], // Use current date
         won,
+        attempts: guesses,
         guesses,
         time: null,
         hardMode: shareText.includes('*'), // Hard mode indicated by asterisk
@@ -233,7 +235,7 @@ const DataManagementPage: React.FC = () => {
                 </h4>
                 <p className="text-xs text-gray-500 mb-3">
                   {importType === 'json' 
-                    ? 'Import from a previously exported Wordle Stat Explorer file'
+                    ? 'Import from a previously exported game history file'
                     : 'Import from a CSV file with columns: puzzle, date, won, guesses, hardMode'
                   }
                 </p>

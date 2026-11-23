@@ -2,11 +2,14 @@
 // Uses only chrome.storage API (no IndexedDB which isn't available in service workers)
 
 import { GameResult } from '@/types/gameTypes';
+import { mergeGames } from '@/utils/mergeGames';
+import { NytReaderAverage } from '@/utils/nytReaderAverage';
 import logger from '../utils/logger';
 const log = logger.log; const errorLog = logger.error;
 
 export class ExtensionStorage {
   private static instance: ExtensionStorage;
+  private writeQueue: Promise<unknown> = Promise.resolve();
 
   private constructor() {}
 
@@ -28,26 +31,46 @@ export class ExtensionStorage {
       return result.games || [];
     } catch (error) {
   errorLog('[ExtensionStorage] Failed to get games:', error);
-      return [];
+      throw error;
     }
   }
 
   async saveGame(game: GameResult): Promise<void> {
-    try {
+    const result = await this.bulkImportGames([game]);
+    if (result.errors) throw new Error('Game could not be saved');
+  }
+
+  async updateReaderAverage(
+    date: string,
+    readers: NytReaderAverage,
+    hardMode?: boolean
+  ): Promise<GameResult | null> {
+    const operation = this.writeQueue.then(async () => {
       const games = await this.getAllGames();
-      const existingIndex = games.findIndex(g => g.date === game.date);
-      
-      if (existingIndex >= 0) {
-        games[existingIndex] = game;
-      } else {
-        games.push(game);
+      const index = games.findIndex(game => game.date === date);
+      const game = games[index];
+      if (!game) return null;
+      if (readers.nytReaderMode !== ((hardMode ?? game.hardMode) ? 'hard' : 'normal')) {
+        return game;
       }
-      
+      const unchanged =
+        (game.nytReaderSource === 'manual' ||
+          (game.nytReaderAverage === readers.nytReaderAverage &&
+            game.nytReaderMode === readers.nytReaderMode &&
+            game.nytReaderSource === readers.nytReaderSource)) &&
+        (hardMode === undefined || game.hardMode === hardMode);
+      // Rewriting the full games array for a no-op update stalls other storage work.
+      if (unchanged) return game;
+      games[index] = {
+        ...game,
+        ...(game.nytReaderSource === 'manual' ? {} : readers),
+        ...(hardMode !== undefined ? { hardMode } : {}),
+      };
       await chrome.storage.local.set({ games });
-    } catch (error) {
-  errorLog('[ExtensionStorage] Failed to save game:', error);
-      throw error;
-    }
+      return games[index]!;
+    });
+    this.writeQueue = operation.catch(() => undefined);
+    return operation;
   }
 
   async bulkImportGames(newGames: GameResult[]): Promise<{
@@ -55,12 +78,26 @@ export class ExtensionStorage {
     duplicates: number;
     errors: number;
   }> {
+    const operation = this.writeQueue.then(() => this.importGames(newGames));
+    this.writeQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async importGames(newGames: GameResult[]): Promise<{
+    imported: number;
+    duplicates: number;
+    errors: number;
+  }> {
+  log(`[ExtensionStorage] =====> bulkImportGames called with ${newGames.length} games`);
     let imported = 0;
     let duplicates = 0;
     let errors = 0;
 
     try {
+  log(`[ExtensionStorage] =====> Reading existing games...`);
+      const startRead = performance.now();
       const existingGames = await this.getAllGames();
+  log(`[ExtensionStorage] =====> Read ${existingGames.length} existing games in ${(performance.now() - startRead).toFixed(0)}ms`);
       
       const gameMap = new Map<string, GameResult>();
       
@@ -69,19 +106,25 @@ export class ExtensionStorage {
         gameMap.set(game.date, game);
       });
       
+  log(`[ExtensionStorage] =====> Processing ${newGames.length} new games...`);
       // Process new games
       for (const game of newGames) {
         try {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(game.date) || !Number.isFinite(Date.parse(game.date)) ||
+              new Date(game.date).toISOString().slice(0, 10) !== game.date) {
+            throw new Error('Invalid game date');
+          }
           const existing = gameMap.get(game.date);
           
           if (existing) {
-            // Check if new game has more data
-            const existingScore = this.getDataRichnessScore(existing);
-            const newScore = this.getDataRichnessScore(game);
-            const shouldReplace = newScore > existingScore;
+            const merged = mergeGames(existing, game);
+            const meaningful = (value: GameResult) => JSON.stringify({
+              ...value, importedAt: undefined, boardImageUrl: undefined
+            });
+            const shouldReplace = meaningful(merged) !== meaningful(existing);
             
             if (shouldReplace) {
-              gameMap.set(game.date, game);
+              gameMap.set(game.date, merged);
               imported++;
             } else {
               duplicates++;
@@ -97,45 +140,29 @@ export class ExtensionStorage {
       }
       
       // Save all games
+  log(`[ExtensionStorage] =====> Writing ${gameMap.size} total games to storage...`);
+      const startWrite = performance.now();
       const allGames = Array.from(gameMap.values());
       
       // OPTIMIZATION: Remove board images before storage to speed up writes
       // Board images are large base64 strings that slow down chrome.storage.local.set
+  log(`[ExtensionStorage] =====> Stripping board images from ${allGames.length} games...`);
       const lightweightGames = allGames.map(g => ({
         ...g,
         boardImageUrl: undefined  // Strip large base64 data URLs
       }));
       
+  log(`[ExtensionStorage] =====> Calling chrome.storage.local.set...`);
       await chrome.storage.local.set({ games: lightweightGames });
+  log(`[ExtensionStorage] =====> Write completed in ${(performance.now() - startWrite).toFixed(0)}ms`);
       
     } catch (error) {
       console.error('[ExtensionStorage] Bulk import failed:', error);
       throw error;
     }
 
+  log(`[ExtensionStorage] =====> bulkImportGames complete: imported=${imported}, duplicates=${duplicates}, errors=${errors}`);
     return { imported, duplicates, errors };
-  }
-
-  private shouldReplaceExisting(existing: GameResult, newGame: GameResult): boolean {
-    // Prefer games with more data (WordleBot data is richer)
-    const existingScore = this.getDataRichnessScore(existing);
-    const newScore = this.getDataRichnessScore(newGame);
-    
-    return newScore > existingScore;
-  }
-
-  private getDataRichnessScore(game: GameResult): number {
-    let score = 0;
-    
-    score += 1; // Base score
-    if (game.skillScore !== undefined) score += 2;
-    if (game.luckScore !== undefined) score += 2;
-    if (game.analysisUrl) score += 1;
-    if (game.solution) score += 1;
-    if (game.guessPattern && game.guessPattern.length > 0) score += 2;
-    if (game.duration || game.timeToComplete) score += 1;
-    
-    return score;
   }
 
   async getNewestGame(): Promise<GameResult | null> {
@@ -148,20 +175,6 @@ export class ExtensionStorage {
       });
     } catch (error) {
       console.error('[ExtensionStorage] Failed to get newest game:', error);
-      return null;
-    }
-  }
-
-  async getOldestGame(): Promise<GameResult | null> {
-    try {
-      const games = await this.getAllGames();
-      if (games.length === 0) return null;
-      
-      return games.reduce((oldest, game) => {
-        return new Date(game.date) < new Date(oldest.date) ? game : oldest;
-      });
-    } catch (error) {
-      console.error('[ExtensionStorage] Failed to get oldest game:', error);
       return null;
     }
   }

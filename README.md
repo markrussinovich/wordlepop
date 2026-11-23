@@ -1,104 +1,73 @@
-# Wordle Stat Explorer
+# WordlePop — Play & Stats
 
-Wordle Stat Explorer is a Chrome/Edge Manifest V3 extension that scrapes your NYTimes Wordle Bot history, stores the results locally, and surfaces rich insights through a lightweight popup and a full analytics dashboard. See the loading instructions in the developer section if you want to just install the extension. The current version is in the dist folder so no need to rebuild.
+Play Wordle and explore your WordleBot history in one Chrome/Edge extension. Resume puzzles in the toolbar popup, persistent pop-out, or dashboard; track your progress and compare results with NYT readers and a local solver.
 
 ## ✨ Capabilities
 
-- Automatic Wordle data import (auto, incremental, and full refresh modes)
-- Local-only storage with fast de-duplication and board-image cleanup
-- Popup quick stats: win rate, average guesses, streaks, and game counts by time frame
-- React-powered dashboard with timelines, trend analysis, WordleBot skill/luck scores
+- **Play in place:** Unplayed boards automatically become playable. Use your physical keyboard or the on-screen keys, with letter pops, feedback flips, invalid-word shakes, and reduced-motion support.
+- **Browse and resume:** **Show unplayed** includes blank records and missing dates. Browse with popup arrows or Left/Right keys, open dashboard tiles, or use the puzzle picker. Drafts and guesses synchronize across views; **Pop out** stays open after the toolbar popup closes.
+- **Track performance:** Quick stats and dashboard charts cover game counts, wins, average turns, distributions, streaks, and available WordleBot skill/luck scores. Completed extension games update dashboard timelines and statistics.
+- **Compare results:** Plot your turns, local solver turns, NYT reader averages, skill, and luck as individual games, rolling averages, or cumulative averages. Toggle metrics and drag the date range to update head-to-head stats and game tiles.
+- **Review boards:** Compare feedback-colored user and solver guess paths. Finished games switch from the keyboard to completed-game comparisons; imported played games remain read-only.
+- **Import reliably:** Automatic, incremental, and full refresh reconcile available WordleBot history, including gaps and partial records. Interrupted imports preserve results already read and can be retried without duplication. NYT access and history availability limits apply.
+- **Keep control:** Local storage, light/dark/system themes, and dashboard import/export and deletion controls. No telemetry, extension-operated cloud service, or separate extension account.
 
-## 📸 Screenshot
-![Wordle Stat Explorer dashboard](https://github.com/markrussinovich/wordlebotstats/blob/001-wordle-stat-explorer/listing/assets/popupanddashboard.png)
+### Playing inside the extension
 
-## 🏗 Architecture Overview
+Turn on **Show unplayed** in the popup or Individual Games section, then open a blank date. There is no separate Play button or text editor: type into the board or click the keyboard. The dashboard's **Play Wordle** link also opens a dedicated view with a puzzle dropdown. **Pop out** opens a persistent Wordle-themed window that stays open when the toolbar popup closes.
 
-- **Background Service Worker (`src/extension/background`)** – orchestrates storage, message routing, scraper state, and dashboard tab management.
-- **Content Scripts (`src/extension/content`)** – interact with the NYTimes Wordle and Wordle Bot pages to capture results safely.
-- **Popup (`src/extension/popup`)** – a vanilla HTML/JS UI that displays quick stats and links into the dashboard.
-- **Dashboard (`src/dashboard`)** – React + Vite single-page app that visualizes historical performance, fed by Zustand stores.
-- **Shared Domain Layer (`src/models`, `src/types`, `src/utils`)** – normalized game data models, TypeScript contracts, and helper utilities (e.g., streak calculations).
-- **State Stores (`src/stores`)** – Zustand slices for games, benchmarks, and preferences shared across popup and dashboard contexts.
+| Puzzle                          | Feedback and persistence                                                                                                                                                                                                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Past, unplayed date             | The extension uses an available imported answer or retrieves that date's puzzle from NYT, then scores guesses locally with duplicate-letter handling. Replays do **not** update your NYT account or official history.                                                                       |
+| Today's unplayed date           | Connects automatically to the actual NYT game tab. Guesses and completion are recorded by NYT as you play, and the extension displays the site's real feedback. Today's answer is not fetched or scored locally. Keep that tab available; NYT login or site dialogs may require opening it. |
+| Date with an existing user game | Read-only review and comparisons; the extension does not replace your imported result.                                                                                                                                                                                                      |
 
-### Data Flow
+Incomplete extension sessions remain playable and can be resumed. Completed sessions appear in game browsing, dashboard timelines, and statistics, but extension progress stays separate from imported game records. The replay dictionary is not NYT's official guess list, so historical replays can accept words that the live NYT game rejects. Connecting to today's board is not a guarantee of signed-in account synchronization; NYT controls its own persistence.
 
-1. Content scripts scrape or import Wordle game results and send them to the background service worker.
-2. The background persists data to `chrome.storage` and exposes it through message handlers.
-3. The popup requests aggregated stats for quick display, while the dashboard pulls full datasets and benchmarks via shared stores.
-4. User actions (refresh, import/export, settings) propagate back through the worker, keeping everything in sync.
+### Understanding comparisons
 
-## 📂 Repository Structure
+The **local solver** is a normal-mode, WordleBot-style heuristic, not NYT WordleBot or a globally optimal solver. It starts with **RAISE**, handles duplicate letters, and chooses guesses using common-answer probabilities and information gain. Calculations run off the UI thread and are cached; unsupported answers show N/A. No proprietary NYT word list or solution sequence is bundled or fetched by the solver.
 
-```text
-.
-├── config/                 # Shared tooling config (Jest, Vite, TS)
-├── docs/                   # Project documentation
-├── public/                 # Icons and public assets bundled into dist
-├── scripts/                # Developer utilities (build, benchmarks, etc.)
-├── src/
-│   ├── components/
-│   │   ├── charts/         # Reusable visualization components
-│   │   └── ui/             # Shared UI primitives (Card, Button, etc.)
-│   ├── dashboard/          # React dashboard app (pages, hooks, styling)
-│   ├── extension/
-│   │   ├── background/     # MV3 service worker and storage helpers
-│   │   ├── content/        # Wordle / Wordle Bot content scripts
-│   │   ├── popup/          # Popup HTML + JS entry point
-│   │   └── utils/          # Extension-specific utilities (logger)
-│   ├── models/             # Domain models for stats & benchmarks
-│   ├── stores/             # Zustand stores (games, benchmarks, prefs)
-│   ├── types/              # Shared TypeScript contracts
-│   └── utils/              # Cross-cutting helpers (streak calc, etc.)
-├── tests/                  # Unit and integration tests (Jest + Playwright)
-├── package.json
-└── README.md
-```
+**NYT reader averages** come from WordleBot's per-puzzle summaries, with normal/hard mode identified when available; otherwise normal mode is used. Missing summaries show N/A, and manually entered figures are preserved. Head-to-head stats use matching played games within the selected range and expose comparison coverage. Your and the solver's failures count as seven turns. Green means you beat the benchmark, yellow a tie, and gray that it beat you.
 
-## 🧪 Development Workflow
+The solver uses public-domain [dwyl/english-words](https://github.com/dwyl/english-words) and [Alternate 12Dicts](https://github.com/en-wl/wordlist), plus adapted [wordfreq](https://github.com/rspeer/wordfreq) frequency data under CC BY-SA 4.0. Pinned sources, credits, and licenses are in [the dictionary notice](src/solver/data/LICENSE.txt) and [packaged solver-data notice](public/solver-data-LICENSE.txt).
 
-### Install Dependencies
+## 📸 Screenshots
 
-```cmd
-npm install
-```
+Screenshots use synthetic demo history, not personal game records.
 
-### Build the Extension
+![Dashboard statistics and performance timeline](listing/assets/screenshot-01-overview.png)
 
-Bundles the popup, dashboard, background worker, and content scripts into `dist/`.
+![Unplayed dashboard tiles with embedded gameplay alongside played-game comparisons](listing/assets/screenshot-03-solver-games.png)
 
-```cmd
-npm run build:quick
-```
+![Historical replay and today's official NYT gameplay in the extension popup](listing/assets/screenshot-04-popup.png)
 
-### Run Tests
+![Dedicated puzzle picker, Wordle board, and keyboard](listing/assets/screenshot-05-play.png)
 
-Runs the Jest unit test suite (React component tests and utility coverage).
+[Timeline comparisons](listing/assets/screenshot-02-comparisons.png) · [Dashboard and gameplay together](listing/assets/popupanddashboard.png)
 
-```cmd
-npm test
-```
+## Install in Chrome/Edge
 
-### Load the Extension in Chrome/Edge
-
-1. Build using the command above (ensures fresh assets in `dist/`).
+1. With Node.js **20.9 or later**, run `npm ci`, then `npm run build:extension` to produce a typechecked build in `dist/`.
 2. Navigate to `chrome://extensions` (or `edge://extensions`).
 3. Enable **Developer mode**.
 4. Click **Load unpacked** and select the project’s `dist/` folder.
 5. Click the extension toolbar icon to open the popup or visit the dashboard tab directly if already open.
 
-## ⚙️ Configuration & Environment
+## Development
 
-- **Logging:** Enable verbose logging by toggling helpers exposed in the background console (`WORDLE_ENABLE_DEBUG_LOGS()` / `WORDLE_DISABLE_DEBUG_LOGS()`).
-- **Storage:** All data stays local via `chrome.storage.local`; benchmarks and settings live in Zustand stores for instant access.
-- **Benchmarks:** Default national and WordleBot benchmarks ship with the extension and can be refreshed from the dashboard.
+Manifest V3 background/content/popup code lives in `src\extension`; the React/Vite dashboard is in `src\dashboard`, shared gameplay in `src\play`, and Zustand stores in `src\stores`. The worker manages imports, local storage, historical scoring, and today's NYT bridge.
+
+```cmd
+npm test
+npm run lint
+npm run build:extension
+npx playwright install chromium
+npm run test:e2e
+```
+
+Benchmark the solver with `npx tsx scripts\benchmark-solver.ts`. Regenerate its dictionaries with `node scripts\update-solver-dictionary.mjs` and `python scripts\update-solver-frequencies.py` (requires `msgpack==1.1.2`); dictionary or policy changes require a solver cache version bump.
 
 ## 🔒 Privacy
 
-**Wordle Stat Explorer respects your privacy and operates with complete transparency.**
-
-All data is stored locally on your device with no external data transmission. For complete details about our privacy practices, data collection, and your rights, please see our [Privacy Policy](PRIVACY.md).
-
----
-
-Enjoy tracking your Wordle journey! Contributions, bug reports, and feature suggestions are always welcome.
+The extension stores your history and replay progress locally and has no telemetry or extension-operated cloud service. It requests NYT puzzle data and reader summaries, and today's gameplay sends guesses through the actual NYT site using your browser's NYT session. Historical replays do not upload results to NYT. See the [Privacy Policy](PRIVACY.md) for details.
