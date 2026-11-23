@@ -1,4 +1,4 @@
-// Background service worker for the Wordle Stats extension
+// Background service worker for the WordlePop extension
 // Handles extension lifecycle, message routing, and storage operations
 
 import { 
@@ -16,8 +16,12 @@ import {
 } from '@/types/messagingTypes';
 import { GameResult } from '@/types/gameTypes';
 import { ExtensionStorage } from './extensionStorage';
+import { fetchNytReaderAverage } from '@/utils/nytReaderAverage';
 import logger from '../utils/logger';
-const log = logger.log; const warn = logger.warn; const errorLog = logger.error;
+import { handlePlayMessage } from './playService';
+import { PLAY_SESSIONS_KEY, PLAY_READER_AVERAGES_KEY } from '@/types/playTypes';
+import { gamesWithPlaySessions, hasUserGame } from '@/utils/playHistory';
+const log = logger.log; const errorLog = logger.error;
 
 // Initialize storage service
 let storageService: ExtensionStorage;
@@ -88,7 +92,7 @@ async function loadInitialScrapeStatus(): Promise<void> {
   }
 }
 
-loadInitialScrapeStatus().catch(() => {
+const initialScrapeStatus = loadInitialScrapeStatus().catch(() => {
   // Best-effort hydration; ignore failures here.
 });
 
@@ -116,14 +120,16 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 // Message routing between extension components
 chrome.runtime.onMessage.addListener(
   (message: any, sender, sendResponse) => {
+  log('[BACKGROUND DEBUG] Received message:', message.type, message);
+  log('[BACKGROUND DEBUG] Sender:', sender);
+    
     handleExtensionMessage(message, sender)
       .then(response => {
-        if (response) {
-          sendResponse(response);
-        }
+  log('[BACKGROUND DEBUG] Sending response:', response);
+        sendResponse(response ?? null);
       })
       .catch(error => {
-        console.error('[Background] Message handling error:', error);
+        console.error('[BACKGROUND DEBUG] Message handling error:', error);
         sendResponse({ 
           success: false, 
           error: error.message 
@@ -185,6 +191,15 @@ async function handleExtensionMessage(
   _sender: chrome.runtime.MessageSender
 ): Promise<any> {
   switch (message.type) {
+    case MessageType.GET_PLAY_CATALOG:
+    case MessageType.GET_PLAY_SESSION:
+    case MessageType.SAVE_PLAY_DRAFT:
+    case MessageType.SUBMIT_PLAY_GUESS:
+    case MessageType.RESET_PLAY_REPLAY:
+    case MessageType.CONNECT_NYT_PLAY:
+    case MessageType.OPEN_PLAY_WINDOW:
+    case MessageType.OPEN_NYT_PLAY_TAB:
+      return handlePlayMessage(message);
     case MessageType.IMPORT_GAME_RESULT:
       return handleImportGameResult(message as ImportGameResultMessage);
       
@@ -193,6 +208,8 @@ async function handleExtensionMessage(
       
     case MessageType.GET_DASHBOARD_DATA:
       return handleGetDashboardData(message as GetDashboardDataMessage);
+    case MessageType.GET_NYT_READER_AVERAGE:
+      return handleGetNytReaderAverage(message);
     case MessageType.OPEN_DASHBOARD_TAB:
       return handleOpenDashboardTab(message as OpenDashboardTabMessage);
       
@@ -229,6 +246,58 @@ async function handleExtensionMessage(
   }
 }
 
+async function handleGetNytReaderAverage(message: {
+  date: string;
+  hardMode?: boolean;
+  words?: string[];
+}): Promise<{ success: boolean; game: GameResult | null }> {
+  if (!storageService) {
+    storageService = ExtensionStorage.getInstance();
+    await storageService.initialize();
+  }
+  const games = await storageService.getAllGames();
+  const importedGame = games.find(game => game.date === message.date);
+  let game = importedGame;
+  if (!hasUserGame(game)) {
+    const stored = await chrome.storage.local.get([PLAY_SESSIONS_KEY, PLAY_READER_AVERAGES_KEY]);
+    game = gamesWithPlaySessions(games, stored[PLAY_SESSIONS_KEY] || {}, stored[PLAY_READER_AVERAGES_KEY] || {})
+      .find(game => game.date === message.date);
+  }
+  if (!game) return { success: true, game: null };
+  let hardMode: boolean | undefined;
+  if (typeof message.hardMode === 'boolean') {
+    const words = game.guessPattern?.map(row =>
+      row.map(cell => cell.letter).join('').toUpperCase()
+    ).filter(word => /^[A-Z]{5}$/.test(word));
+    if (!words?.length || JSON.stringify(words) !== JSON.stringify(message.words)) {
+      return { success: false, game: null };
+    }
+    hardMode = message.hardMode;
+  }
+  if (game.nytReaderSource === 'manual') return { success: true, game };
+  const readers = await fetchNytReaderAverage({
+    ...game, hardMode: hardMode ?? game.hardMode
+  });
+  if (!hasUserGame(importedGame)) {
+    if (readers && game.metadata?.extensionPlayMode) {
+      const stored = await chrome.storage.local.get(PLAY_READER_AVERAGES_KEY);
+      const averages = stored[PLAY_READER_AVERAGES_KEY] || {};
+      const previous = averages[game.date];
+      if (previous?.nytReaderAverage !== readers.nytReaderAverage ||
+          previous?.nytReaderMode !== readers.nytReaderMode ||
+          previous?.nytReaderSource !== readers.nytReaderSource)
+        await chrome.storage.local.set({
+          [PLAY_READER_AVERAGES_KEY]: { ...averages, [game.date]: readers }
+        });
+    }
+    return { success: true, game: readers ? { ...game, ...readers } : game };
+  }
+  return {
+    success: true,
+    game: readers ? await storageService.updateReaderAverage(game.date, readers, hardMode) : game,
+  };
+}
+
 // Handle game result import from content script
 async function handleImportGameResult(message: ImportGameResultMessage): Promise<{ success: boolean }> {
   try {
@@ -259,10 +328,46 @@ async function handleGetQuickStats(message: GetQuickStatsMessage): Promise<Quick
   try {
     const result = await chrome.storage.local.get(['games']);
     const games = result.games || [];
+    console.log(`[BACKGROUND DEBUG] GET_QUICK_STATS: Total games in storage: ${games.length}`);
+    console.log(`[BACKGROUND DEBUG] GET_QUICK_STATS: Timeframe requested: ${message.timeFrame}`);
+    if (games.length > 0) {
+      console.log(`[BACKGROUND DEBUG] GET_QUICK_STATS: Sample game dates:`, games.slice(0, 5).map((g: any) => g.date));
+    }
     
     // Calculate stats for the requested time frame
     const filteredGames = filterGamesByTimeFrame(games, message.timeFrame);
+    console.log(`[BACKGROUND DEBUG] GET_QUICK_STATS: Filtered games count: ${filteredGames.length}`);
+    if (filteredGames.length > 0) {
+      console.log(`[BACKGROUND DEBUG] GET_QUICK_STATS: Filtered game dates:`, filteredGames.map((g: any) => g.date));
+      console.log(
+        `[BACKGROUND DEBUG] GET_QUICK_STATS: Filtered game details:`,
+        filteredGames.map((g: any) => {
+          const turns = (() => {
+            if (typeof g.attempts === 'number' && !Number.isNaN(g.attempts)) {
+              return g.attempts;
+            }
+            if (typeof g.guesses === 'number' && !Number.isNaN(g.guesses)) {
+              return g.guesses;
+            }
+            if (typeof g.steps === 'number' && !Number.isNaN(g.steps)) {
+              return g.steps;
+            }
+            if (Array.isArray(g.guessPattern)) {
+              return g.guessPattern.length;
+            }
+            return 0;
+          })();
+
+          return {
+            date: g.date,
+            turns,
+            won: g.won === true
+          };
+        })
+      );
+    }
     const statistics = calculateStatistics(filteredGames, games);
+    console.log(`[BACKGROUND DEBUG] GET_QUICK_STATS: Calculated statistics:`, statistics);
     
     // Get the most recent game
     let lastGame = null;
@@ -271,6 +376,7 @@ async function handleGetQuickStats(message: GetQuickStatsMessage): Promise<Quick
         new Date(b.date).getTime() - new Date(a.date).getTime()
       );
       lastGame = sortedGames[0];
+      console.log(`[BACKGROUND DEBUG] GET_QUICK_STATS: Last game:`, lastGame);
     }
     
     return {
@@ -379,55 +485,52 @@ let scraperTabId: number | null = null;
 
 async function handleStartWordleBotScrape(message: any): Promise<void | { success: boolean; skipped?: boolean; reason?: string; tabId?: number; message?: string }> {
   try {
+    console.log(`[BACKGROUND DEBUG] Starting WordleBot scrape (mode: ${message.mode})`);
+    console.log('[BACKGROUND DEBUG] Storage service available:', !!storageService);
+    await initialScrapeStatus;
+    if ((currentScrapeStatus.phase === 'checking' || currentScrapeStatus.phase === 'importing') &&
+        Date.now() - Date.parse(currentScrapeStatus.lastUpdated) < 300000) {
+      return { success: true, skipped: true, reason: 'A history import is already running.' };
+    }
+    await updateScrapeStatus({
+      phase: 'checking', mode: message.mode, gamesFound: 0, gamesProcessed: 0,
+      newGames: 0, duplicates: 0, errors: 0, error: null, dateRange: null, statusMessage: 'Checking history'
+    });
+    
     // Initialize storage service if not available
     if (!storageService) {
+      console.log('[BACKGROUND DEBUG] Initializing storage service...');
       storageService = ExtensionStorage.getInstance();
       await storageService.initialize();
     }
     
-    // For incremental mode, find the newest game we have and stop when we reach it
-    // This avoids deep scanning once all recent games are imported
-    let stopAtDate: string | undefined;
-    
-    if (message.mode === 'incremental' || message.mode === 'auto') {
-      const allGames = await storageService.getAllGames();
-      if (allGames.length > 0) {
-        // Find newest game date
-        const dates = allGames.map(g => g.date).filter(d => d).sort();
-        stopAtDate = dates[dates.length - 1]; // Newest date
-      }
-    }
+    // A newest-date cutoff cannot repair older holes or enrich partial records.
+    const stopAtDate: string | undefined = message.stopAtDate;
     
     // Store scrape parameters in storage for content script to pick up
+    console.log('[BACKGROUND DEBUG] Storing scrape parameters in storage...');
     await chrome.storage.local.set({
       wordleBotScrapeParams: {
         mode: message.mode,
         stopAtDate,
-        maxIterations: message.maxIterations || 50,
+        maxIterations: message.maxIterations || 200,
         timestamp: Date.now()
       }
     });
     
     // Open WordleBot page in background tab
+    console.log('[BACKGROUND DEBUG] Creating WordleBot tab...');
     const tab = await chrome.tabs.create({
       url: 'https://www.nytimes.com/interactive/2022/upshot/wordle-bot.html',
       active: false
     });
     
     scraperTabId = tab.id || null;
-
-    await updateScrapeStatus({
-      phase: 'checking',
-      gamesFound: 0,
-      gamesProcessed: 0,
-      newGames: 0,
-      duplicates: 0,
-      errors: 0,
-      mode: message.mode,
-      error: null,
-      statusMessage: 'Checking for latest games'
-    });
+    console.log('[BACKGROUND DEBUG] Opened WordleBot tab:', scraperTabId);
     
+    // The content script will auto-start scraping when it loads
+    console.log('[BACKGROUND DEBUG] Tab created, content script will auto-start scraping');
+
     return { success: true, ...(scraperTabId ? { tabId: scraperTabId } : {}), message: 'Scraping started' };
   } catch (error) {
     console.error('[Background] Failed to start WordleBot scrape:', error);
@@ -527,6 +630,7 @@ async function handleWordleBotScrapeProgress(message: any): Promise<{ success: b
 
 async function handleWordleBotScrapeComplete(message: any): Promise<{ success: boolean }> {
   console.log('[Background] Scrape complete:', message);
+  const partial = message.errors > 0 && (message.newGames || 0) + (message.duplicates || 0) > 0;
   
   // Update scraper metadata
   try {
@@ -536,34 +640,34 @@ async function handleWordleBotScrapeComplete(message: any): Promise<{ success: b
     }
     await storageService.updateScraperMetadata({
       lastScrape: new Date().toISOString(),
-      lastScrapeMode: 'auto', // TODO: derive real mode from message when available
-      totalScraped: message.totalGames
+      lastScrapeMode: currentScrapeStatus.mode || 'auto',
+      totalScraped: message.totalGames,
+      lastError: message.errors ? `${message.errors} games failed to import` : ''
     });
   } catch (metadataError) {
     console.error('[Background] Failed to update scraper metadata after completion:', metadataError);
   }
   
   // Close the scraper tab after a short delay to allow user to see completion
-  if (scraperTabId) {
+  const completedTabId = scraperTabId;
+  if (completedTabId) {
     setTimeout(() => {
-      if (scraperTabId) {
-        chrome.tabs.remove(scraperTabId).catch(() => {});
-        scraperTabId = null;
-      }
+      chrome.tabs.remove(completedTabId).catch(() => {});
+      if (scraperTabId === completedTabId) scraperTabId = null;
     }, 2000);
   }
   
   await updateScrapeStatus({
-    phase: 'complete',
+    phase: message.errors ? (partial ? 'warning' : 'error') : 'complete',
     gamesFound: message.totalGames ?? currentScrapeStatus.gamesFound,
     gamesProcessed: message.totalGames ?? currentScrapeStatus.gamesProcessed,
     newGames: message.newGames ?? currentScrapeStatus.newGames,
     duplicates: message.duplicates ?? currentScrapeStatus.duplicates,
     errors: message.errors ?? currentScrapeStatus.errors,
-    statusMessage: message.newGames && message.newGames > 0
+    statusMessage: message.errors ? `Import incomplete: ${message.errors} games failed. Retry to fill history.` : message.newGames && message.newGames > 0
       ? `Added ${message.newGames} new game${message.newGames === 1 ? '' : 's'}`
       : 'Scrape complete',
-    error: null,
+    error: message.errors ? 'Some games were not saved. Retry the import.' : null,
     dateRange: message.dateRange ?? currentScrapeStatus.dateRange
   });
 
@@ -576,7 +680,9 @@ async function handleWordleBotScrapeComplete(message: any): Promise<{ success: b
     console.log('[Background] Could not forward to popup:', err);
   }
   
+  const completedAt = currentScrapeStatus.lastUpdated;
   setTimeout(() => {
+    if (currentScrapeStatus.phase !== 'complete' || currentScrapeStatus.lastUpdated !== completedAt) return;
     updateScrapeStatus({
       phase: 'idle',
       gamesFound: 0,
@@ -675,12 +781,15 @@ function filterGamesByTimeFrame(games: any[], timeFrame: string): any[] {
       return games;
   }
   
+  console.log(`[BACKGROUND DEBUG] filterGamesByTimeFrame: Cutoff date for ${timeFrame}: ${cutoffDate.toISOString()}`);
+  
   const filtered = games.filter((game: any) => {
     if (!game.date) return false;
     const gameDate = new Date(game.date);
     return gameDate >= cutoffDate;
   });
   
+  console.log(`[BACKGROUND DEBUG] filterGamesByTimeFrame: Filtered ${filtered.length} games from ${games.length} total (cutoff: ${cutoffDate.toISOString()})`);
   return filtered;
 }
 
@@ -772,6 +881,9 @@ function calculateStatistics(games: any[], allGames?: any[]): any {
     }
   }
   
+  console.log(`[BACKGROUND DEBUG] calculateStatistics: Using ${gamesToUseForStreaks.length} games for streaks, ${playedGames.length} played games for other stats`);
+  console.log(`[BACKGROUND DEBUG] calculateStatistics: currentStreak=${currentStreak}, maxStreak=${maxStreak}`);
+  
   return {
     winRate,
     averageGuesses,
@@ -820,6 +932,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 async function handleOpenDashboardTab(_message: OpenDashboardTabMessage): Promise<OpenDashboardTabResponse> {
   const dashboardUrl = chrome.runtime.getURL('dashboard.html');
+  const destination = dashboardUrl + (_message.page === 'play' ? '#/play' : '');
   const dashboardPattern = `chrome-extension://${chrome.runtime.id}/dashboard.html*`;
 
   // Try cached tab first
@@ -830,11 +943,11 @@ async function handleOpenDashboardTab(_message: OpenDashboardTabMessage): Promis
         if (existingTab.windowId !== undefined) {
           await chrome.windows.update(existingTab.windowId, { focused: true });
         }
-        await chrome.tabs.update(existingTab.id, { active: true });
-        await chrome.tabs.reload(existingTab.id);
+        await chrome.tabs.update(existingTab.id, { active: true, ...(_message.page === 'play' ? { url: destination } : {}) });
+        if (_message.page !== 'play') await chrome.tabs.reload(existingTab.id);
         return { success: true, reused: true, tabId: existingTab.id };
       }
-    } catch (err) {
+    } catch {
       dashboardTabId = null;
     }
   }
@@ -849,8 +962,8 @@ async function handleOpenDashboardTab(_message: OpenDashboardTabMessage): Promis
       if (tabToUse.windowId !== undefined) {
         await chrome.windows.update(tabToUse.windowId, { focused: true });
       }
-      await chrome.tabs.update(tabToUse.id, { active: true });
-      await chrome.tabs.reload(tabToUse.id);
+      await chrome.tabs.update(tabToUse.id, { active: true, ...(_message.page === 'play' ? { url: destination } : {}) });
+      if (_message.page !== 'play') await chrome.tabs.reload(tabToUse.id);
       return { success: true, reused: true, tabId: tabToUse.id };
     }
   } catch (queryError) {
@@ -858,7 +971,7 @@ async function handleOpenDashboardTab(_message: OpenDashboardTabMessage): Promis
   }
 
   // Create new dashboard tab as fallback
-  const createdTab = await chrome.tabs.create({ url: dashboardUrl });
+  const createdTab = await chrome.tabs.create({ url: destination });
   dashboardTabId = createdTab.id ?? null;
   return { success: true, reused: false, tabId: createdTab.id ?? undefined };
 }

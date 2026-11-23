@@ -46,7 +46,7 @@ test.describe('Performance Benchmarking', () => {
     await page.goto('/dashboard');
     
     // Wait for all main dashboard elements to load
-    await expect(page.locator('h1')).toContainText('Wordle Stat Explorer');
+    await expect(page.locator('h1')).toContainText('WordlePop');
     await expect(page.locator('[data-testid="overview-content"]')).toBeVisible();
     await expect(page.locator('[data-testid="stat-card"]')).toHaveCount(4);
     await expect(page.locator('nav')).toBeVisible();
@@ -149,7 +149,7 @@ test.describe('Performance Benchmarking', () => {
     console.log(`Large dataset chart render time: ${chartLoadTime}ms`);
   });
 
-  test('memory usage should be reasonable', async ({ page, context }) => {
+  test('memory usage should be reasonable', async ({ page }) => {
     await page.goto('/dashboard');
     
     // Get initial memory usage

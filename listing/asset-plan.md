@@ -2,30 +2,31 @@
 
 The Chrome Web Store listing relies on a cohesive set of visual assets. Use this plan to track production and ensure everything adheres to Google's guidance on sizes, clarity, and branding consistency.
 
-| Asset | Dimensions | Format | Status | Notes |
-| --- | --- | --- | --- | --- |
-| Store icon | 128 × 128 px (PNG) | Transparent PNG | ☐ To capture | Use the existing extension icon, ensure crisp edges, no screenshots or small text. Export at 128×128 and 48×48 for internal testing. |
-| Screenshot 1 | 1280 × 800 px | PNG | ☐ To capture | Dashboard overview with win rate, streak, and WordleBot comparison visible. Use light mode with authentic data; crop to remove browser UI. |
-| Screenshot 2 | 1280 × 800 px | PNG | ☐ To capture | Auto-import flow showing spinner and NYT login guidance. Demonstrate the popup collecting data. |
-| Screenshot 3 | 1280 × 800 px | PNG | ☐ To capture | Trend timeline showcasing performance over time with tooltips. Highlight comparison to national average. |
-| Screenshot 4 | 1280 × 800 px | PNG | ☐ Optional | Optional stager showing benchmarking view or preferences panel. |
-| Screenshot 5 | 1280 × 800 px | PNG | ☐ Optional | Optional advanced analytics (guess distribution chart) once available. |
-| Promo tile (small) | 440 × 280 px | PNG | ☐ To design | Bold gradient background with logo and short tagline: “Understand your Wordle streak”. Minimal text, align with icon palette. |
-| Marquee image | 1400 × 560 px | PNG | ☐ Optional | Wide-format hero; include product mockup and CTA “Compare with WordleBot”. Keep margins, avoid clutter. |
+| Asset              | Dimensions         | Format          | Status                        | Notes                                                                                                                                                   |
+| ------------------ | ------------------ | --------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Store icon         | 128 × 128 px (PNG) | Transparent PNG | ☑ Complete (WordlePop 1.1.2) | `assets/icon-128.png`: Wordle tiles with the rose analytics badge, exported from the extension icon.                                                    |
+| Screenshot 1       | 1280 × 800 px      | PNG             | ☑ Complete (WordlePop 1.1.2) | `assets/screenshot-01-overview.png`: dashboard totals, head-to-head stats, and timeline vs solver and NYT readers.                                      |
+| Screenshot 2       | 1280 × 800 px      | PNG             | ☑ Complete (WordlePop 1.1.2) | `assets/screenshot-02-comparisons.png`: last-30-days individual-game timeline with solver and NYT reader comparisons.                                   |
+| Screenshot 3       | 1280 × 800 px      | PNG             | ☑ Complete (WordlePop 1.1.2) | `assets/screenshot-03-solver-games.png`: Show unplayed, three embedded boards, shared replay progress, keyboards, and played-game comparison summaries. |
+| Screenshot 4       | 1280 × 800 px      | PNG             | ☑ Complete (WordlePop 1.1.2) | `assets/screenshot-04-popup.png`: historical replay and today's automatic NYT board, labeled as a demo.                                                 |
+| Screenshot 5       | 1280 × 800 px      | PNG             | ☑ Complete (WordlePop 1.1.2) | `assets/screenshot-05-play.png`: dedicated puzzle dropdown, direct tile entry, shared progress, and keyboard.                                           |
+| Promo tile (small) | 440 × 280 px       | PNG             | ☑ Complete (WordlePop 1.1.2) | `assets/promo-tile-440x280.png`: POP! tiles, WordlePop name, and "Play. Compare. Explore." 24-bit, no alpha.                                            |
+| Marquee image      | 1400 × 560 px      | PNG             | ☑ Complete (WordlePop 1.1.2) | `assets/marquee-1400x560.png`: WordlePop / Play & Stats branding with actual dashboard and replay-popup captures. 24-bit, no alpha.                     |
 
 ## Capture guidelines
 
+- **No alpha channel**: The store accepts JPEG or 24-bit PNG only. Playwright output can be RGBA, so flatten to RGB (e.g. Pillow `convert("RGB")`) before uploading.
 - **Keep screenshots full-bleed**: No borders or rounded corners. Use square corners, true 1280×800 layout.
 - **Stay current**: Re-capture whenever UI or styling changes significantly.
-- **Consistent theming**: Use the brand gradient (#6AAA64 → #538D4E) for promo graphics. Align fonts with the in-product typography where legally permissible.
+- **Consistent theming**: Use colors from the extension's `--cp-*` theme variables and Segoe UI typography for promotional graphics.
 - **Avoid promotional claims**: No “#1” badges, editor-callouts, or misleading text.
 
 ## Workflow
 
-1. Stage representative data by running the extension locally and importing sample games (`tests/fixtures/sample-wordle-data.json` if needed).
-2. Capture PNGs using a high-DPI display. Verify they remain sharp when viewed at 50% scale.
-3. Optimize files (ImageOptim or `pnpm imagemin` equivalent) before committing to keep repository size manageable.
-4. Place final assets in `listing/assets/` and mark the table above as complete.
+1. Run `npm run build:extension`, then `npx tsx --tsconfig config\tsconfig.json scripts\capture-listing-screenshots.ts`.
+2. The generator loads the real unpacked extension in a temporary Chromium profile, seeds synthetic history and demo past-puzzle data, and enters replay guesses through the real UI. Today's connection responses are simulated and the panel is labeled as a demo: no NYT account or official game is used.
+3. Review all five 1280x800 screenshots. The generator also refreshes the README composite, its `resized/` copy, the 440x280 promo tile, and the 1400x560 marquee.
+4. Images are flattened to RGB PNGs. Theme colors come from the extension's CSS variables. Mark assets complete only after checking the rendered output and dimensions.
 
 ## Future enhancements
 
