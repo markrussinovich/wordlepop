@@ -454,6 +454,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({ games, onRangeChange, tur
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length > 0) {
       const data = payload[0].payload as ChartDataPoint;
+      const comparison = visiblePoints.find(point => point.date === data.date);
       
       // Debug logging for tooltip data
       console.log('[TOOLTIP DEBUG] Raw game data:', {
@@ -537,7 +538,7 @@ const TimelineChart: React.FC<TimelineChartProps> = ({ games, onRangeChange, tur
             {METRICS.filter(metric => metrics[metric.key]).map(metric => (
               <React.Fragment key={metric.key}>
                 <span style={{ '--metric-color': metric.color } as CSSProperties}>{metric.label}</span>
-                <span>{typeof data[metric.key] === 'number' ? data[metric.key]!.toFixed(2) : 'N/A'}</span>
+                <span>{typeof comparison?.[metric.key] === 'number' ? comparison[metric.key]!.toFixed(2) : 'N/A'}</span>
               </React.Fragment>
             ))}
           </div>

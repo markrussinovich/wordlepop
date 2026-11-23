@@ -362,6 +362,19 @@ test('real solver worker, chart, tiles, reader persistence and cached reload wor
     page.locator('.timeline-chart .recharts-line-curve')
   ).toHaveCount(5);
   await expect(page.getByText('Score', { exact: true })).toBeVisible();
+  for (const plot of ['daily', 'cumulative', 'trend']) {
+    await page.getByLabel('Timeline averaging').selectOption(plot);
+    await page.locator('.recharts-scatter-symbol').nth(1).hover({ force: true });
+    const tooltip = page.locator('.chart-tooltip');
+    await expect(tooltip.locator('.tooltip-word')).toHaveText('PENNY');
+    await expect(tooltip.locator('.tooltip-comparisons > span')).toHaveText([
+      'Your turns', '7.00',
+      'Local solver', '3.00',
+      'NYT readers', 'N/A',
+      'Skill', '90.00',
+      'Luck', '0.00',
+    ]);
+  }
   await page.getByRole('button', { name: 'Game results', exact: true }).click();
   await expect(page.locator('.recharts-scatter')).toHaveCount(0);
   await page.getByLabel('Timeline averaging').selectOption('cumulative');
